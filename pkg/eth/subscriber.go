@@ -467,54 +467,112 @@ func (s *WSSubscriber) writeFrame(data []byte) error {
 }
 
 func (s *WSSubscriber) readFrame() ([]byte, error) {
-	// Read first 2 bytes
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(s.reader, header); err != nil {
-		return nil, err
+	for {
+		// Read first 2 bytes
+		header := make([]byte, 2)
+		if _, err := io.ReadFull(s.reader, header); err != nil {
+			return nil, err
+		}
+
+		// Check opcode
+		opcode := header[0] & 0x0F
+
+		// Payload length
+		payloadLen := int64(header[1] & 0x7F)
+		if payloadLen == 126 {
+			ext := make([]byte, 2)
+			if _, err := io.ReadFull(s.reader, ext); err != nil {
+				return nil, err
+			}
+			payloadLen = int64(binary.BigEndian.Uint16(ext))
+		} else if payloadLen == 127 {
+			ext := make([]byte, 8)
+			if _, err := io.ReadFull(s.reader, ext); err != nil {
+				return nil, err
+			}
+			payloadLen = int64(binary.BigEndian.Uint64(ext))
+		}
+
+		// Check for mask (server should not mask, but we should handle skipping it if present)
+		if header[1]&0x80 != 0 {
+			// Skip mask key
+			mask := make([]byte, 4)
+			if _, err := io.ReadFull(s.reader, mask); err != nil {
+				return nil, err
+			}
+		}
+
+		// Read payload
+		payload := make([]byte, payloadLen)
+		if _, err := io.ReadFull(s.reader, payload); err != nil {
+			return nil, err
+		}
+
+		switch opcode {
+		case 0x01, 0x02: // Text or Binary
+			return payload, nil
+		case 0x08: // Close
+			return nil, errors.New("connection closed by server")
+		case 0x09: // Ping
+			s.logger.Debug("received ping, sending pong")
+			if err := s.writePong(payload); err != nil {
+				return nil, fmt.Errorf("sending pong: %w", err)
+			}
+			continue // Read next frame
+		case 0x0A: // Pong
+			s.logger.Debug("received pong")
+			continue // Read next frame
+		default:
+			// Ignore unknown opcodes
+			continue
+		}
+	}
+}
+
+func (s *WSSubscriber) writePong(data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("connection closed")
 	}
 
-	// Check opcode
-	opcode := header[0] & 0x0F
-	if opcode == 0x08 { // Close frame
-		return nil, errors.New("connection closed by server")
-	}
-	if opcode == 0x09 { // Ping
-		// Should respond with pong, but for simplicity just read and continue
-		s.logger.Debug("received ping")
-	}
+	// WebSocket frame: FIN=1, opcode=0xA (Pong), mask=1
+	frame := make([]byte, 0, 14+len(data))
+	frame = append(frame, 0x8A) // FIN + Pong
 
 	// Payload length
-	payloadLen := int64(header[1] & 0x7F)
-	if payloadLen == 126 {
-		ext := make([]byte, 2)
-		if _, err := io.ReadFull(s.reader, ext); err != nil {
-			return nil, err
-		}
-		payloadLen = int64(binary.BigEndian.Uint16(ext))
-	} else if payloadLen == 127 {
-		ext := make([]byte, 8)
-		if _, err := io.ReadFull(s.reader, ext); err != nil {
-			return nil, err
-		}
-		payloadLen = int64(binary.BigEndian.Uint64(ext))
+	if len(data) < 126 {
+		frame = append(frame, byte(len(data))|0x80) // Set mask bit
+	} else if len(data) < 65536 {
+		frame = append(frame, 126|0x80)
+		frame = append(frame, byte(len(data)>>8), byte(len(data)))
+	} else {
+		frame = append(frame, 127|0x80)
+		frame = append(frame, make([]byte, 8)...)
+		binary.BigEndian.PutUint64(frame[len(frame)-8:], uint64(len(data)))
 	}
 
-	// Check for mask (server should not mask)
-	if header[1]&0x80 != 0 {
-		// Skip mask key
-		mask := make([]byte, 4)
-		if _, err := io.ReadFull(s.reader, mask); err != nil {
-			return nil, err
-		}
+	// Masking key
+	mask := make([]byte, 4)
+	if _, err := rand.Read(mask); err != nil {
+		return err
 	}
+	frame = append(frame, mask...)
 
-	// Read payload
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(s.reader, payload); err != nil {
-		return nil, err
+	// Masked payload
+	masked := make([]byte, len(data))
+	for i, b := range data {
+		masked[i] = b ^ mask[i%4]
 	}
+	frame = append(frame, masked...)
 
-	return payload, nil
+	_, err := conn.Write(frame)
+	return err
 }
 
 func (s *WSSubscriber) parseBlockHeader(raw json.RawMessage) (*Block, error) {
