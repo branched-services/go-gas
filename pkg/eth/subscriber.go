@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // Subscriber manages WebSocket subscriptions to an Ethereum node.

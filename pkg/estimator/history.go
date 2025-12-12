@@ -2,8 +2,6 @@ package estimator
 
 import (
 	"sync"
-
-	"github.com/branched-services/go-gas/pkg/eth"
 )
 
 // History stores recent blocks in a fixed-size ring buffer.
@@ -13,7 +11,7 @@ import (
 // provides optimal read performance without lock-free complexity.
 type History struct {
 	mu     sync.RWMutex
-	blocks []*eth.Block
+	blocks []*BlockData
 	size   int
 	head   int // next write position
 	count  int // number of stored blocks
@@ -25,14 +23,14 @@ func NewHistory(size int) *History {
 		size = 20
 	}
 	return &History{
-		blocks: make([]*eth.Block, size),
+		blocks: make([]*BlockData, size),
 		size:   size,
 	}
 }
 
 // Push adds a block to the history.
 // If the buffer is full, the oldest block is overwritten.
-func (h *History) Push(block *eth.Block) {
+func (h *History) Push(block *BlockData) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -44,7 +42,7 @@ func (h *History) Push(block *eth.Block) {
 }
 
 // Latest returns the most recently added block, or nil if empty.
-func (h *History) Latest() *eth.Block {
+func (h *History) Latest() *BlockData {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -58,11 +56,11 @@ func (h *History) Latest() *eth.Block {
 
 // Snapshot returns a copy of all stored blocks, newest first.
 // The returned slice is owned by the caller and safe to modify.
-func (h *History) Snapshot() []*eth.Block {
+func (h *History) Snapshot() []*BlockData {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	result := make([]*eth.Block, h.count)
+	result := make([]*BlockData, h.count)
 	for i := 0; i < h.count; i++ {
 		// Walk backwards from head
 		idx := (h.head - 1 - i + h.size) % h.size

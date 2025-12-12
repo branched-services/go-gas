@@ -154,6 +154,9 @@ func (e *Estimator) Run(ctx context.Context) error {
 	ticker := time.NewTicker(e.recalcInterval)
 	defer ticker.Stop()
 
+	// Start pending tx processor
+	go e.processPendingTxs(ctx, txHashCh)
+
 	e.logger.Info("estimator running",
 		"strategy", e.strategy.Name(),
 		"history_size", e.historySize,
@@ -171,14 +174,8 @@ func (e *Estimator) Run(ctx context.Context) error {
 			if !ok {
 				return fmt.Errorf("block subscription closed")
 			}
-			e.handleNewBlock(ctx, block)
-
-		case txHash, ok := <-txHashCh:
-			if !ok {
-				return fmt.Errorf("tx subscription closed")
-			}
-			// Process in background to avoid blocking main loop
-			go e.processPendingTx(ctx, txHash)
+			// Handle block in background to avoid blocking main loop
+			go e.handleNewBlock(ctx, block)
 
 		case <-ticker.C:
 			e.recalculate(ctx)
@@ -206,7 +203,7 @@ func (e *Estimator) bootstrap(ctx context.Context) error {
 			)
 			continue
 		}
-		e.history.Push(block)
+		e.history.Push(e.convertBlock(block))
 	}
 
 	e.logger.Info("bootstrap complete", "blocks_loaded", e.history.Len())
@@ -231,7 +228,7 @@ func (e *Estimator) handleNewBlock(ctx context.Context, block *eth.Block) {
 		return
 	}
 
-	e.history.Push(fullBlock)
+	e.history.Push(e.convertBlock(fullBlock))
 	e.recalculate(ctx)
 
 	lag := time.Since(block.Timestamp)
@@ -280,12 +277,6 @@ func (e *Estimator) buildInput(ctx context.Context) (*CalculatorInput, error) {
 		return nil, fmt.Errorf("no blocks in history")
 	}
 
-	// Convert blocks to BlockData
-	recentBlocks := make([]*BlockData, len(blocks))
-	for i, block := range blocks {
-		recentBlocks[i] = e.convertBlock(block)
-	}
-
 	// Sample pending transactions from local pool
 	pendingTxs := e.localPool.Snapshot()
 
@@ -297,8 +288,8 @@ func (e *Estimator) buildInput(ctx context.Context) (*CalculatorInput, error) {
 
 	return &CalculatorInput{
 		ChainID:          e.chainID,
-		CurrentBlock:     recentBlocks[0],
-		RecentBlocks:     recentBlocks,
+		CurrentBlock:     blocks[0],
+		RecentBlocks:     blocks,
 		PendingTxs:       pendingTxs,
 		PreviousEstimate: prevEstimate,
 	}, nil
@@ -333,19 +324,59 @@ func (e *Estimator) convertTx(tx *eth.Transaction) *TxData {
 	}
 }
 
-// processPendingTx fetches and adds a pending transaction to the local pool.
-func (e *Estimator) processPendingTx(ctx context.Context, hash string) {
-	// Fetch transaction details
-	// Use a short timeout to avoid hanging on slow nodes
+// processPendingTxs batches pending transaction hashes and fetches them efficiently.
+func (e *Estimator) processPendingTxs(ctx context.Context, ch <-chan string) {
+	const batchSize = 100
+	const batchTimeout = 50 * time.Millisecond
+
+	batch := make([]string, 0, batchSize)
+	timer := time.NewTimer(batchTimeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case hash, ok := <-ch:
+			if !ok {
+				return
+			}
+			batch = append(batch, hash)
+			if len(batch) >= batchSize {
+				e.fetchAndAddTxs(ctx, batch)
+				batch = batch[:0]
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(batchTimeout)
+			}
+		case <-timer.C:
+			if len(batch) > 0 {
+				e.fetchAndAddTxs(ctx, batch)
+				batch = batch[:0]
+			}
+			timer.Reset(batchTimeout)
+		}
+	}
+}
+
+func (e *Estimator) fetchAndAddTxs(ctx context.Context, hashes []string) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	tx, err := e.txReader.TransactionByHash(ctx, hash)
+	txs, err := e.txReader.TransactionsByHashes(ctx, hashes)
 	if err != nil {
-		// Ignore errors (tx might be gone or node busy)
 		return
 	}
-	e.localPool.Add(tx)
+
+	for _, tx := range txs {
+		if tx != nil {
+			e.localPool.Add(tx)
+		}
+	}
 }
 
 // Helper functions

@@ -3,13 +3,13 @@ package eth
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/holiman/uint256"
 )
 
@@ -28,6 +28,7 @@ type TxPoolReader interface {
 // TransactionReader abstracts transaction fetching.
 type TransactionReader interface {
 	TransactionByHash(ctx context.Context, hash string) (*Transaction, error)
+	TransactionsByHashes(ctx context.Context, hashes []string) ([]*Transaction, error)
 }
 
 // Client provides access to an Ethereum node via JSON-RPC.
@@ -44,8 +45,8 @@ func NewClient(httpURL string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 100,
+				MaxIdleConns:        1000,
+				MaxIdleConnsPerHost: 1000,
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
@@ -92,6 +93,48 @@ func (c *Client) TransactionByHash(ctx context.Context, hash string) (*Transacti
 	}
 	tx := raw.toTransaction()
 	return &tx, nil
+}
+
+// TransactionsByHashes fetches multiple transactions in a single batch request.
+func (c *Client) TransactionsByHashes(ctx context.Context, hashes []string) ([]*Transaction, error) {
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+
+	reqs := make([]rpcRequest, len(hashes))
+	for i, hash := range hashes {
+		reqs[i] = rpcRequest{
+			JSONRPC: "2.0",
+			ID:      c.requestID.Add(1),
+			Method:  "eth_getTransactionByHash",
+			Params:  []any{hash},
+		}
+	}
+
+	responses, err := c.batchCall(ctx, reqs)
+	if err != nil {
+		return nil, err
+	}
+
+	txs := make([]*Transaction, 0, len(responses))
+	for _, resp := range responses {
+		if resp.Error != nil {
+			// Log error or skip? For now, skip failed lookups
+			continue
+		}
+		if len(resp.Result) == 0 || string(resp.Result) == "null" {
+			continue
+		}
+
+		var raw rpcTransaction
+		if err := json.Unmarshal(resp.Result, &raw); err != nil {
+			continue
+		}
+		tx := raw.toTransaction()
+		txs = append(txs, &tx)
+	}
+
+	return txs, nil
 }
 
 // PendingTransactions returns pending transactions from the mempool.
@@ -222,4 +265,35 @@ func (c *Client) call(ctx context.Context, method string, params []any, result a
 	}
 
 	return nil
+}
+
+func (c *Client) batchCall(ctx context.Context, reqs []rpcRequest) ([]rpcResponse, error) {
+	body, err := json.Marshal(reqs)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling batch request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.httpURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating batch request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending batch request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var rpcResps []rpcResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResps); err != nil {
+		return nil, fmt.Errorf("decoding batch response: %w", err)
+	}
+
+	return rpcResps, nil
 }

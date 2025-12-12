@@ -2,7 +2,7 @@ package estimator
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/holiman/uint256"
@@ -61,8 +61,14 @@ func (s *HybridStrategy) Calculate(ctx context.Context, input *CalculatorInput) 
 	for _, block := range input.RecentBlocks {
 		historicalFees = append(historicalFees, block.PriorityFees...)
 	}
-	sort.Slice(historicalFees, func(i, j int) bool {
-		return historicalFees[i].Lt(historicalFees[j])
+	slices.SortFunc(historicalFees, func(a, b *uint256.Int) int {
+		if a.Lt(b) {
+			return -1
+		}
+		if b.Lt(a) {
+			return 1
+		}
+		return 0
 	})
 
 	// Collect priority fees from pending transactions
@@ -73,8 +79,14 @@ func (s *HybridStrategy) Calculate(ctx context.Context, input *CalculatorInput) 
 			mempoolFees = append(mempoolFees, fee)
 		}
 	}
-	sort.Slice(mempoolFees, func(i, j int) bool {
-		return mempoolFees[i].Lt(mempoolFees[j])
+	slices.SortFunc(mempoolFees, func(a, b *uint256.Int) int {
+		if a.Lt(b) {
+			return -1
+		}
+		if b.Lt(a) {
+			return 1
+		}
+		return 0
 	})
 
 	// Compute estimates at each confidence level

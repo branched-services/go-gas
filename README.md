@@ -42,30 +42,7 @@ High-performance, ultra low-latency Ethereum gas price estimator for Go.
 
 Performance is the primary goal of this library. We migrated from `math/big` to `uint256` to reduce garbage collection overhead on the hot path.
 
-| Metric          | Value               | Notes                         |
-| :-------------- | :------------------ | :---------------------------- |
-| **Latency**     | **~71 µs/op**       | Core calculation loop         |
-| **Allocations** | **1,033 allocs/op** | Reduced from >2,000 allocs/op |
-| **Memory**      | **~48 KB/op**       | Mostly stack-allocated        |
-
-### Raw Results
-
-```text
-goos: linux
-goarch: amd64
-pkg: github.com/branched-services/go-gas/pkg/estimator
-cpu: Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz
-BenchmarkLocalTxPool_Add-16             19395898                69.48 ns/op           32 B/op          1 allocs/op
-BenchmarkLocalTxPool_Snapshot-16           23301             53846 ns/op           40960 B/op          1 allocs/op
-BenchmarkStrategy_Calculate-16             18152             71172 ns/op           48856 B/op       1033 allocs/op
-```
-
-*Benchmarks run on Intel i9-9900K @ 3.60GHz*
-
-To run benchmarks yourself:
-```bash
-go test -bench=. -benchmem ./pkg/estimator/...
-```
+See [BENCHMARKS.md](BENCHMARKS.md) for the latest results and a detailed history of performance improvements.
 
 ## Installation
 

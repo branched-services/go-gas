@@ -2,16 +2,14 @@ package estimator
 
 import (
 	"testing"
-
-	"github.com/branched-services/go-gas/pkg/eth"
 )
 
 func TestHistory(t *testing.T) {
 	h := NewHistory(3)
 
 	// Helper
-	makeBlock := func(n uint64) *eth.Block {
-		return &eth.Block{Number: n}
+	makeBlock := func(n uint64) *BlockData {
+		return &BlockData{Number: n}
 	}
 
 	// Push 1

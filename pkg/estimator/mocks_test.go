@@ -45,6 +45,21 @@ func (m *mockTxReader) TransactionByHash(ctx context.Context, hash string) (*eth
 	return nil, nil
 }
 
+func (m *mockTxReader) TransactionsByHashes(ctx context.Context, hashes []string) ([]*eth.Transaction, error) {
+	if m.txByHashFunc != nil {
+		var txs []*eth.Transaction
+		for _, hash := range hashes {
+			tx, err := m.txByHashFunc(ctx, hash)
+			if err != nil {
+				continue
+			}
+			txs = append(txs, tx)
+		}
+		return txs, nil
+	}
+	return nil, nil
+}
+
 type mockSubscriber struct {
 	subHeadsFunc   func(ctx context.Context) (<-chan *eth.Block, error)
 	subPendingFunc func(ctx context.Context) (<-chan string, error)
