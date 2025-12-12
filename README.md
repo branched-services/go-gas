@@ -42,11 +42,11 @@ High-performance, ultra low-latency Ethereum gas price estimator for Go.
 
 Performance is the primary goal of this library. We migrated from `math/big` to `uint256` to reduce garbage collection overhead on the hot path.
 
-| Metric | Value | Notes |
-| :--- | :--- | :--- |
-| **Latency** | **~71 µs/op** | Core calculation loop |
+| Metric          | Value               | Notes                         |
+| :-------------- | :------------------ | :---------------------------- |
+| **Latency**     | **~71 µs/op**       | Core calculation loop         |
 | **Allocations** | **1,033 allocs/op** | Reduced from >2,000 allocs/op |
-| **Memory** | **~48 KB/op** | Mostly stack-allocated |
+| **Memory**      | **~48 KB/op**       | Mostly stack-allocated        |
 
 ### Raw Results
 
@@ -151,12 +151,12 @@ You can also run `go-gas` as a standalone microservice that exposes estimates vi
 #### 1. Configuration
 Configure via environment variables:
 
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `GAS_NODE_HTTP_URL` | Ethereum Node HTTP URL | `http://localhost:8545` |
-| `GAS_NODE_WS_URL` | Ethereum Node WebSocket URL | `ws://localhost:8546` |
-| `GAS_PORT` | Service Port | `8080` |
-| `GAS_LOG_LEVEL` | Log Level (debug, info, warn, error) | `info` |
+| Variable            | Description                          | Default                 |
+| :------------------ | :----------------------------------- | :---------------------- |
+| `GAS_NODE_HTTP_URL` | Ethereum Node HTTP URL               | `http://localhost:8545` |
+| `GAS_NODE_WS_URL`   | Ethereum Node WebSocket URL          | `ws://localhost:8546`   |
+| `GAS_PORT`          | Service Port                         | `8080`                  |
+| `GAS_LOG_LEVEL`     | Log Level (debug, info, warn, error) | `info`                  |
 
 #### 2. Run with Docker
 
