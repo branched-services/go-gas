@@ -179,6 +179,21 @@ go build -o gas-estimator cmd/estimator/main.go
 # Run
 export GAS_NODE_HTTP_URL=...
 ./gas-estimator
+
+## Future Optimizations
+
+To further reduce `chain_lag_ms` and improve responsiveness, the following optimizations are planned:
+
+### Infrastructure
+- **Co-location**: Run the estimator on the same physical machine or VPC as the Ethereum node to minimize network latency.
+- **IPC over HTTP**: Switch from HTTP to Unix Domain Sockets (IPC) for block fetching when co-located.
+- **Node Tuning**: Utilize high-performance clients (Reth/Erigon) on NVMe hardware to speed up `eth_getBlockByNumber` calls.
+
+### Architecture
+- **Eliminate Round Trip**: Subscribe to full blocks directly (where supported) instead of the current "Header -> Fetch Body" pattern.
+- **Optimistic Updates**: Immediately update the `BaseFee` component of estimates upon receiving a new header, while asynchronously fetching transaction data for `PriorityFee` updates.
+- **Streaming Transactions**: Reduce reliance on full block analysis by weighting local mempool data more heavily, allowing for faster (albeit slightly less accurate) updates before the full block body is downloaded.
+
 ```
 
 ## Contributing
