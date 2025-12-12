@@ -424,6 +424,14 @@ func (s *WSSubscriber) writeFrame(data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("connection closed")
+	}
+
 	// WebSocket frame: FIN=1, opcode=1 (text), mask=1 (client must mask)
 	frame := make([]byte, 0, 14+len(data))
 	frame = append(frame, 0x81) // FIN + text frame
@@ -454,7 +462,7 @@ func (s *WSSubscriber) writeFrame(data []byte) error {
 	}
 	frame = append(frame, masked...)
 
-	_, err := s.conn.Write(frame)
+	_, err := conn.Write(frame)
 	return err
 }
 
