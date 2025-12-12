@@ -52,6 +52,9 @@ func (t *Transaction) EffectivePriorityFee(baseFee *uint256.Int) *uint256.Int {
 
 	if t.Type == 2 && t.MaxFeePerGas != nil && t.MaxPriorityFeePerGas != nil {
 		// EIP-1559 transaction
+		if t.MaxFeePerGas.Lt(baseFee) {
+			return uint256.NewInt(0)
+		}
 		// maxMinusBase = MaxFeePerGas - BaseFee
 		maxMinusBase := new(uint256.Int).Sub(t.MaxFeePerGas, baseFee)
 
