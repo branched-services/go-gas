@@ -60,64 +60,102 @@ Embed the estimator directly into your Go application for the lowest possible la
 package main
 
 import (
-"context"
-"fmt"
-"log"
-"time"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-"github.com/branched-services/go-gas/pkg/estimator"
-"github.com/branched-services/go-gas/pkg/eth"
+	"log/slog"
+
+	"github.com/branched-services/go-gas/pkg/estimator"
+	"github.com/branched-services/go-gas/pkg/eth"
 )
 
 func main() {
-ctx := context.Background()
+	// 1. Configuration
+	httpURL := os.Getenv("GAS_NODE_HTTP_URL")
+	wsURL := os.Getenv("GAS_NODE_WS_URL")
 
-// 1. Initialize Ethereum Client
-// Requires a node with WebSocket and Debug/TxPool API support
-client, err := eth.NewClient(
-"http://localhost:8545",
-"ws://localhost:8546",
-)
-if err != nil {
-log.Fatal(err)
-}
+	if httpURL == "" || wsURL == "" {
+		log.Fatal("Please set GAS_NODE_HTTP_URL and GAS_NODE_WS_URL environment variables")
+	}
 
-// 2. Create the Provider (holds the current estimate)
-provider := estimator.NewProvider()
+	// 2. Setup dependencies
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-// 3. Create and Configure Estimator
-est := estimator.New(
-client,   // BlockReader
-client,   // TransactionReader
-client,   // Subscriber
-provider, // State container
-estimator.WithHistorySize(20),
-estimator.WithMempoolSamples(500),
-estimator.WithRecalcInterval(100*time.Millisecond),
-)
+	// HTTP Client for fetching historical blocks
+	client := eth.NewClient(httpURL)
+	defer client.Close()
 
-// 4. Start the Estimator in the background
-go func() {
-if err := est.Run(ctx); err != nil {
-log.Printf("Estimator stopped: %v", err)
-}
-}()
+	// WebSocket Subscriber for real-time updates
+	sub := eth.NewWSSubscriber(wsURL, logger)
+	defer sub.Close()
 
-// 5. Read Estimates (Thread-Safe, Non-Blocking)
-ticker := time.NewTicker(1 * time.Second)
-for range ticker.C {
-estimate, err := provider.Current(ctx)
-if err != nil {
-log.Println("Estimator warming up...")
-continue
-}
+	// Provider stores the latest estimate atomically
+	provider := estimator.NewProvider()
 
-fmt.Printf("BaseFee: %s Gwei\n", estimate.BaseFee.Dec())
-fmt.Printf("Fast (90%%): %s Gwei (Priority: %s)\n",
-estimate.Fast.MaxFeePerGas.Dec(),
-estimate.Fast.MaxPriorityFeePerGas.Dec(),
-)
-}
+	// 3. Initialize Estimator
+	est := estimator.New(
+		client, // BlockReader
+		client, // TransactionReader
+		sub,    // Subscriber
+		provider,
+		estimator.WithHistorySize(20),
+		estimator.WithMempoolSamples(200),
+		estimator.WithRecalcInterval(1*time.Second),
+		estimator.WithLogger(logger),
+	)
+
+	// 4. Run Estimator in background
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	go func() {
+		logger.Info("Starting estimator...")
+		if err := est.Run(ctx); err != nil {
+			if err != context.Canceled {
+				logger.Error("Estimator failed", "error", err)
+				os.Exit(1)
+			}
+		}
+	}()
+
+	// 5. Consume estimates
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	fmt.Println("Waiting for first estimate...")
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("\nShutting down...")
+			return
+		case <-ticker.C:
+			// Get the latest estimate (thread-safe, lock-free)
+			estimate, err := provider.Current(ctx)
+			if err == estimator.ErrNotReady {
+				continue
+			}
+			if err != nil {
+				logger.Error("Failed to get estimate", "error", err)
+				continue
+			}
+
+			// Print the estimate
+			fmt.Printf("\n--- Gas Estimate (Block %d) ---\n", estimate.BlockNumber)
+			fmt.Printf("Base Fee: %s wei\n", estimate.BaseFee.Dec())
+			fmt.Printf("Urgent (99%%): %s wei (Total: %s)\n",
+				estimate.Urgent.MaxPriorityFeePerGas.Dec(),
+				estimate.Urgent.MaxFeePerGas.Dec())
+			fmt.Printf("Fast   (90%%): %s wei\n", estimate.Fast.MaxPriorityFeePerGas.Dec())
+			fmt.Printf("Std    (50%%): %s wei\n", estimate.Standard.MaxPriorityFeePerGas.Dec())
+			fmt.Printf("Slow   (25%%): %s wei\n", estimate.Slow.MaxPriorityFeePerGas.Dec())
+		}
+	}
 }
 ```
 
